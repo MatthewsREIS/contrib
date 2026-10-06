@@ -135,7 +135,7 @@ func TestCollectFKColumnAddedOnceAcrossAliases(t *testing.T) {
 		&ast.Field{Name: "owner", Alias: "a"},
 		&ast.Field{Name: "owner", Alias: "b"},
 	))
-	require.Len(t, calls, 2, "both aliases must collect")
+	require.Len(t, calls, 1, "aliases of a unique edge collect once, merged")
 	require.Equal(t, []string{"id", "owner_id"}, p.selected)
 }
 
@@ -303,4 +303,140 @@ func TestSpecIndexAcceptsDistinctNames(t *testing.T) {
 		_ = gqlcollect.Collect(spec, &parentQuery{}, context.Background(),
 			false, &graphql.OperationContext{}, sel(&ast.Field{Name: "name"}), nil)
 	})
+}
+
+// --- unique edge selected under several aliases ----------------------------
+
+type eagerParent struct{ eager map[string]*columnsChild }
+
+type columnsChild struct{ columns []string }
+
+// withEagerChild mirrors the generated helper's StoreEager: one slot per edge
+// name, last write wins.
+func withEagerChild(q *eagerParent, opts ...func(*columnsChild)) *eagerParent {
+	sub := &columnsChild{}
+	for _, opt := range opts {
+		opt(sub)
+	}
+	if q.eager == nil {
+		q.eager = map[string]*columnsChild{}
+	}
+	q.eager["company"] = sub
+	return q
+}
+
+var companySpec = &gqlcollect.Spec{
+	IDColumn: "id",
+	Fields: []gqlcollect.Field{
+		{GQL: "name", Column: "name"},
+		{GQL: "phone", Column: "phone"},
+	},
+	Select: func(parent any, columns []string) { parent.(*columnsChild).columns = columns },
+}
+
+func collectCompany(sub *columnsChild, ctx context.Context, oneNode bool, opCtx *graphql.OperationContext, field graphql.CollectedField, path []string, satisfies ...string) error {
+	return gqlcollect.Collect(companySpec, sub, ctx, oneNode, opCtx, field, path, satisfies...)
+}
+
+func newContactSpec() *gqlcollect.Spec {
+	return &gqlcollect.Spec{
+		IDColumn: "id",
+		Edges:    []gqlcollect.Edge{gqlcollect.Unique("company", "contact_company", nil, collectCompany, withEagerChild)},
+		Select:   func(any, []string) {},
+	}
+}
+
+func companyField(alias string, scalars ...string) *ast.Field {
+	set := make(ast.SelectionSet, len(scalars))
+	for i, name := range scalars {
+		set[i] = &ast.Field{Name: name, Alias: name}
+	}
+	return &ast.Field{Name: "company", Alias: alias, SelectionSet: set}
+}
+
+func TestCollectUniqueEdgeUnderTwoAliasesLoadsUnionOfColumns(t *testing.T) {
+	parent := &eagerParent{}
+	require.NoError(t, gqlcollect.Collect(newContactSpec(), parent, context.Background(), false, &graphql.OperationContext{},
+		sel(companyField("nameOnly", "name"), companyField("phoneOnly", "phone")), nil))
+	require.Equal(t, []string{"id", "name", "phone"}, parent.eager["company"].columns)
+}
+
+func collectContact(t *testing.T, collected graphql.CollectedField, satisfies ...string) *eagerParent {
+	t.Helper()
+	parent := &eagerParent{}
+	require.NoError(t, gqlcollect.Collect(newContactSpec(), parent, context.Background(), false, &graphql.OperationContext{}, collected, nil, satisfies...))
+	return parent
+}
+
+func TestCollectUniqueEdgeUnderThreeAliasesLoadsUnionOfColumns(t *testing.T) {
+	parent := collectContact(t, sel(
+		companyField("first", "name"),
+		companyField("second", "phone"),
+		companyField("third", "name"),
+	))
+	require.Equal(t, []string{"id", "name", "phone"}, parent.eager["company"].columns)
+}
+
+func TestCollectUniqueEdgeAliasesWithOverlappingFieldsSelectEachColumnOnce(t *testing.T) {
+	parent := collectContact(t, sel(
+		companyField("a", "name", "phone"),
+		companyField("b", "phone", "name"),
+	))
+	require.Equal(t, []string{"id", "name", "phone"}, parent.eager["company"].columns)
+}
+
+func TestCollectUniqueEdgeAliasesMergeSelectionsFromFragments(t *testing.T) {
+	fragment := func(typeCondition string, scalar string) *ast.Field {
+		return &ast.Field{Name: "company", Alias: scalar + "Alias", SelectionSet: ast.SelectionSet{
+			&ast.InlineFragment{TypeCondition: typeCondition, SelectionSet: ast.SelectionSet{&ast.Field{Name: scalar, Alias: scalar}}},
+		}}
+	}
+	parent := collectContact(t, sel(fragment("", "name"), fragment("Company", "phone")), "Company")
+	require.Equal(t, []string{"id", "name", "phone"}, parent.eager["company"].columns)
+}
+
+func TestCollectUniqueEdgeAliasesHonorIncludeDirectiveInsideMergedSelections(t *testing.T) {
+	skipped := companyField("skipped", "phone")
+	skipped.SelectionSet[0].(*ast.Field).Directives = ast.DirectiveList{{
+		Name:      "include",
+		Arguments: ast.ArgumentList{{Name: "if", Value: &ast.Value{Kind: ast.BooleanValue, Raw: "false"}}},
+	}}
+	parent := collectContact(t, sel(companyField("kept", "name"), skipped))
+	require.Equal(t, []string{"id", "name"}, parent.eager["company"].columns)
+}
+
+func TestCollectNestedUniqueEdgesUnderAliasesMergeAtEveryLevel(t *testing.T) {
+	grandchildren := map[string]*columnsChild{}
+	companyWithOwner := &gqlcollect.Spec{
+		IDColumn: "id",
+		Edges: []gqlcollect.Edge{gqlcollect.Unique("owner", "", nil,
+			func(sub *columnsChild, ctx context.Context, oneNode bool, opCtx *graphql.OperationContext, field graphql.CollectedField, path []string, satisfies ...string) error {
+				return gqlcollect.Collect(companySpec, sub, ctx, oneNode, opCtx, field, path, satisfies...)
+			},
+			func(q *columnsChild, opts ...func(*columnsChild)) *columnsChild {
+				sub := &columnsChild{}
+				for _, opt := range opts {
+					opt(sub)
+				}
+				grandchildren["owner"] = sub
+				return q
+			})},
+		Select: func(any, []string) {},
+	}
+	contactSpec := &gqlcollect.Spec{
+		IDColumn: "id",
+		Edges: []gqlcollect.Edge{gqlcollect.Unique("company", "", nil,
+			func(sub *columnsChild, ctx context.Context, oneNode bool, opCtx *graphql.OperationContext, field graphql.CollectedField, path []string, satisfies ...string) error {
+				return gqlcollect.Collect(companyWithOwner, sub, ctx, oneNode, opCtx, field, path, satisfies...)
+			}, withEagerChild)},
+		Select: func(any, []string) {},
+	}
+	nested := func(alias, ownerAlias, scalar string) *ast.Field {
+		return &ast.Field{Name: "company", Alias: alias, SelectionSet: ast.SelectionSet{
+			&ast.Field{Name: "owner", Alias: ownerAlias, SelectionSet: ast.SelectionSet{&ast.Field{Name: scalar, Alias: scalar}}},
+		}}
+	}
+	require.NoError(t, gqlcollect.Collect(contactSpec, &eagerParent{}, context.Background(), false, &graphql.OperationContext{},
+		sel(nested("a", "x", "name"), nested("b", "y", "phone")), nil))
+	require.Equal(t, []string{"id", "name", "phone"}, grandchildren["owner"].columns)
 }
