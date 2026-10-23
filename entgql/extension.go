@@ -21,6 +21,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strings"
+	"sync"
 
 	"entgo.io/ent/entc"
 	"entgo.io/ent/entc/gen"
@@ -51,7 +53,9 @@ type (
 		splitGoFiles            bool   // split generated Go files into per-entity files
 		parallelWhereInputFiles bool   // opt-in parallel generation for where-input split files
 		importsDir              string // real target dir for imports.Process path resolution during split generation
-		maxPageSize             int    // server-side default and cap for connection pagination
+		splitTmpDir             string // staging dir whose files are promoted into importsDir
+		packageNamesByDir       sync.Map
+		maxPageSize             int // server-side default and cap for connection pagination
 	}
 
 	// ExtensionOption allows for managing the Extension configuration
@@ -545,6 +549,7 @@ func (e *Extension) generateSplitGoFiles(g *gen.Graph) error {
 	// When generating to tmpDir, imports.Process needs a path inside the real
 	// module tree to correctly resolve packages (e.g., google/uuid vs gofrs/uuid).
 	e.importsDir = g.Target
+	e.splitTmpDir = tmpDir
 
 	// Deep-copy Config so that setting staged.Target does not mutate g.Target.
 	// Graph embeds *Config (pointer), so a shallow copy shares the same Config.
@@ -1355,7 +1360,41 @@ func (e *Extension) processImports(path string, src []byte) ([]byte, error) {
 	if e.importsDir != "" {
 		resolvePath = filepath.Join(e.importsDir, filepath.Base(path))
 	}
-	return formatSource(resolvePath, src)
+	return formatSource(resolvePath, src, e.packageNames(path))
+}
+
+type dirNames struct {
+	once  sync.Once
+	names map[string]bool
+}
+
+// packageNames returns the package-level names declared by the Go files already
+// in the directory the generated file is promoted to, read once per directory.
+func (e *Extension) packageNames(path string) map[string]bool {
+	dir := filepath.Dir(path)
+	if dir == e.splitTmpDir && e.importsDir != "" {
+		dir = e.importsDir
+	}
+	v, _ := e.packageNamesByDir.LoadOrStore(dir, &dirNames{})
+	d := v.(*dirNames)
+	d.once.Do(func() {
+		d.names = map[string]bool{}
+		entries, _ := os.ReadDir(dir)
+		for _, entry := range entries {
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") {
+				continue
+			}
+			file := filepath.Join(dir, entry.Name())
+			src, err := os.ReadFile(file)
+			if err != nil {
+				continue
+			}
+			for _, n := range packageLevelNames(file, src) {
+				d.names[n] = true
+			}
+		}
+	})
+	return d.names
 }
 
 // hasTemplate reports if the template exists
