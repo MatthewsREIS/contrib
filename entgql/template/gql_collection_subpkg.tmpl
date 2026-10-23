@@ -23,8 +23,8 @@ package gqlcollections
 
 import (
 	"context"
+	"database/sql/driver"
 	"fmt"
-
 	"entgo.io/contrib/entgql"
 	"entgo.io/contrib/entgql/gqlcollect"
 	"entgo.io/ent/dialect/sql"
@@ -39,12 +39,10 @@ import (
 		{{- end }}
 	{{- end }}
 	{{- if $.HasWhereInputTemplate }}
-		{{- range $fc := $collects }}
-			{{- if and (isRelayConn $fc.Edge) (hasWhereInput $fc.Edge) }}
-		"{{ $.Config.Package }}/whereinputs"
-				{{- /* break after first */}}
-			{{- end }}
-		{{- end }}
+	"{{ $.Config.Package }}/whereinputs"
+	{{- end }}
+	{{- with $node.ID.Type.PkgPath }}
+	"{{ . }}"
 	{{- end }}
 )
 

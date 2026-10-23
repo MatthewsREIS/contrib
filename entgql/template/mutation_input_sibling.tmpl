@@ -21,10 +21,23 @@ package mutationinputs
 
 import (
     "context"
-
     "entgo.io/contrib/entgql/gqlinput"
     "entgo.io/contrib/entgql/gqlwhere"
     "{{ $.Config.Package }}/{{ $pkg }}"
+    {{- $seen := dict }}
+    {{- range $n := $inputs }}
+        {{- $fields := list }}
+        {{- with $n.Type.ID }}{{ $fields = append $fields . }}{{ end }}
+        {{- range $f := $n.Type.Fields }}{{ $fields = append $fields $f }}{{ end }}
+        {{- range $e := $n.Type.EdgesWithID }}{{ $fields = append $fields $e.Type.ID }}{{ end }}
+        {{- range $f := $fields }}
+            {{- $pkg := $f.Type.PkgPath }}
+            {{- if and $pkg (not (hasKey $seen $pkg)) }}
+                {{- $seen = set $seen $pkg true }}
+    {{ $name := $f.Type.PkgName }}{{ if ne $name (base $pkg) }}{{ $name }} {{ end }}"{{ $pkg }}"
+            {{- end }}
+        {{- end }}
+    {{- end }}
 )
 
 {{- range $n := $inputs }}

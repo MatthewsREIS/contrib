@@ -22,11 +22,13 @@ package {{ $node.Package }}
 
 import (
 	"context"
-
 	"entgo.io/contrib/entgql"
 	"entgo.io/contrib/entgql/gqlpage"
 	"entgo.io/ent/dialect/sql"
 	"github.com/99designs/gqlgen/graphql"
+	{{- with $idType.PkgPath }}
+	"{{ . }}"
+	{{- end }}
 )
 
 // Cursor and PageInfo are local aliases to entgql.Cursor/PageInfo for this package.

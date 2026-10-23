@@ -28,7 +28,6 @@ import (
 	"github.com/99designs/gqlgen/codegen/config"
 	"github.com/vektah/gqlparser/v2/ast"
 	"golang.org/x/sync/errgroup"
-	"golang.org/x/tools/imports"
 )
 
 // ExtensionAnnotation carries graph-level entgql configuration for code generation.
@@ -1356,7 +1355,7 @@ func (e *Extension) processImports(path string, src []byte) ([]byte, error) {
 	if e.importsDir != "" {
 		resolvePath = filepath.Join(e.importsDir, filepath.Base(path))
 	}
-	return imports.Process(resolvePath, src, nil)
+	return formatSource(resolvePath, src)
 }
 
 // hasTemplate reports if the template exists
