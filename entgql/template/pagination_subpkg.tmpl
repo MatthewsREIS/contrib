@@ -27,7 +27,8 @@ import (
 	"entgo.io/ent/dialect/sql"
 	"github.com/99designs/gqlgen/graphql"
 	{{- with $idType.PkgPath }}
-	"{{ . }}"
+		{{- $name := $idType.PkgName }}
+	{{ if ne $name (base .) }}{{ $name }} {{ end }}"{{ . }}"
 	{{- end }}
 )
 

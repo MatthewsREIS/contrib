@@ -42,7 +42,8 @@ import (
 	"{{ $.Config.Package }}/whereinputs"
 	{{- end }}
 	{{- with $node.ID.Type.PkgPath }}
-	"{{ . }}"
+		{{- $name := $node.ID.Type.PkgName }}
+	{{ if ne $name (base .) }}{{ $name }} {{ end }}"{{ . }}"
 	{{- end }}
 )
 

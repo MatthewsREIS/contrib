@@ -666,6 +666,46 @@ func TestPaginationSubpkgTemplateExecution(t *testing.T) {
 	require.NotContains(t, with, "MaxPageSize: 0")
 }
 
+func TestSubpkgTemplatesAliasUppercaseIDPackage(t *testing.T) {
+	s, err := gen.NewStorage("sql")
+	require.NoError(t, err)
+	graph, err := entc.LoadGraph("./internal/todo/ent/schema", &gen.Config{Storage: s})
+	require.NoError(t, err)
+
+	var todoNode *gen.Type
+	for _, n := range graph.Nodes {
+		if n.Name == "Todo" {
+			todoNode = n
+			break
+		}
+	}
+	require.NotNil(t, todoNode)
+	idType := *todoNode.ID.Type
+	idType.Ident = "IDs.ID"
+	idType.PkgPath = "example.com/types"
+	idType.PkgName = "IDs"
+	for _, n := range graph.Nodes {
+		n.ID.Type = &idType
+	}
+	graph.IDType = &idType
+
+	var pagination bytes.Buffer
+	require.NoError(t, PaginationSubpkgTemplate.ExecuteTemplate(&pagination, "gql_pagination_subpkg", struct {
+		*gen.Graph
+		Node *gen.Type
+	}{graph, todoNode}))
+	require.Contains(t, pagination.String(), `IDs "example.com/types"`)
+
+	var collection bytes.Buffer
+	require.NoError(t, CollectionSubpkgTemplate.ExecuteTemplate(&collection, "gql_collection_subpkg", struct {
+		*gen.Graph
+		Node                  *gen.Type
+		HasWhereInputTemplate bool
+		HasPaginationSubpkg   bool
+	}{graph, todoNode, true, true}))
+	require.Contains(t, collection.String(), `IDs "example.com/types"`)
+}
+
 func TestMutationInputSiblingTemplateExecution(t *testing.T) {
 	// mutation_input_sibling.tmpl no longer hand-rolls each Mutate() body --
 	// it emits a `mutate:"<op>:<name>"` struct tag per field/edge and
