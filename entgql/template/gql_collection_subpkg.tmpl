@@ -41,9 +41,13 @@ import (
 	{{- if $.HasWhereInputTemplate }}
 	"{{ $.Config.Package }}/whereinputs"
 	{{- end }}
-	{{- with $node.ID.Type.PkgPath }}
-		{{- $name := $node.ID.Type.PkgName }}
+	{{- $relay := false }}
+	{{- range $fc := $collects }}{{ if isRelayConn $fc.Edge }}{{ $relay = true }}{{ end }}{{ end }}
+	{{- if $relay }}
+		{{- with $node.ID.Type.PkgPath }}
+			{{- $name := $node.ID.Type.PkgName }}
 	{{ if ne $name (base .) }}{{ $name }} {{ end }}"{{ . }}"
+		{{- end }}
 	{{- end }}
 )
 

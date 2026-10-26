@@ -30,8 +30,9 @@ import (
 	"github.com/99designs/gqlgen/graphql/errcode"
 	"github.com/vektah/gqlparser/v2/gqlerror"
 	"{{ $.Config.Package }}/internal"
-	{{- if $idType.PkgPath }}
-	"{{ $idType.PkgPath }}"
+	{{- with $idType.PkgPath }}
+		{{- $name := $idType.PkgName }}
+	{{ if ne $name (base .) }}{{ $name }} {{ end }}"{{ . }}"
 	{{- end }}
 )
 

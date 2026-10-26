@@ -1365,12 +1365,13 @@ func (e *Extension) processImports(path string, src []byte) ([]byte, error) {
 
 type dirNames struct {
 	once  sync.Once
-	names map[string]bool
+	names map[string]map[string]bool
 }
 
-// packageNames returns the package-level names declared by the Go files already
-// in the directory the generated file is promoted to, read once per directory.
-func (e *Extension) packageNames(path string) map[string]bool {
+// packageNames returns, per package clause, the package-level names declared by
+// the non-test Go files already in the directory the generated file is promoted
+// to, read once per directory.
+func (e *Extension) packageNames(path string) map[string]map[string]bool {
 	dir := filepath.Dir(path)
 	if dir == e.splitTmpDir && e.importsDir != "" {
 		dir = e.importsDir
@@ -1378,10 +1379,10 @@ func (e *Extension) packageNames(path string) map[string]bool {
 	v, _ := e.packageNamesByDir.LoadOrStore(dir, &dirNames{})
 	d := v.(*dirNames)
 	d.once.Do(func() {
-		d.names = map[string]bool{}
+		d.names = map[string]map[string]bool{}
 		entries, _ := os.ReadDir(dir)
 		for _, entry := range entries {
-			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") {
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") || strings.HasSuffix(entry.Name(), "_test.go") {
 				continue
 			}
 			file := filepath.Join(dir, entry.Name())
@@ -1389,8 +1390,15 @@ func (e *Extension) packageNames(path string) map[string]bool {
 			if err != nil {
 				continue
 			}
-			for _, n := range packageLevelNames(file, src) {
-				d.names[n] = true
+			pkg, found := packageLevelNames(file, src)
+			if pkg == "" {
+				continue
+			}
+			if d.names[pkg] == nil {
+				d.names[pkg] = map[string]bool{}
+			}
+			for _, n := range found {
+				d.names[pkg][n] = true
 			}
 		}
 	})

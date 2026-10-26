@@ -87,7 +87,9 @@ func TestPruneUnusedImportsSiblingValueQualifier(t *testing.T) {
 	src := "package p\n\nimport \"fmt\"\n\nfunc f() string { return fmt.Sprint(Field.ID) }\n"
 	_, ok := pruneUnusedImports("p.go", []byte(src), nil)
 	require.False(t, ok)
-	out, ok := pruneUnusedImports("p.go", []byte(src), map[string]bool{"Field": true})
+	_, ok = pruneUnusedImports("p.go", []byte(src), map[string]map[string]bool{"q": {"Field": true}})
+	require.False(t, ok, "a name declared by another package in the directory does not count")
+	out, ok := pruneUnusedImports("p.go", []byte(src), map[string]map[string]bool{"p": {"Field": true}})
 	require.True(t, ok)
 	require.Contains(t, string(out), `"fmt"`)
 }
@@ -98,20 +100,35 @@ func TestPruneUnusedImportsUppercasePackageQualifier(t *testing.T) {
 	require.False(t, ok)
 }
 
+func TestPruneUnusedImportsKeepsCgoImport(t *testing.T) {
+	src := "package p\n\n// #include <stdio.h>\nimport \"C\"\n\nimport \"fmt\"\n\nfunc f() {}\n"
+	out, ok := pruneUnusedImports("p.go", []byte(src), nil)
+	require.True(t, ok)
+	require.Contains(t, string(out), `import "C"`)
+	require.NotContains(t, string(out), `"fmt"`)
+}
+
 func TestPackageLevelNames(t *testing.T) {
 	src := "package p\n\nimport \"fmt\"\n\nvar A, b = 1, 2\n\nconst C = 1\n\ntype T struct{}\n\nfunc F() { fmt.Println() }\n\nfunc (T) M() {}\n"
-	require.Equal(t, []string{"A", "b", "C", "T", "F"}, packageLevelNames("p.go", []byte(src)))
-	require.Nil(t, packageLevelNames("p.go", []byte("not go")))
+	pkg, names := packageLevelNames("p.go", []byte(src))
+	require.Equal(t, "p", pkg)
+	require.Equal(t, []string{"A", "b", "C", "T", "F"}, names)
+	pkg, names = packageLevelNames("p.go", []byte("not go"))
+	require.Equal(t, "", pkg)
+	require.Nil(t, names)
 }
 
 func TestPackageNamesReadsPromotedDirectory(t *testing.T) {
 	target := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(target, "todo.go"), []byte("package todo\n\nvar Field struct{ ID int }\n"), 0644))
-	require.NoError(t, os.WriteFile(filepath.Join(target, "notes.txt"), []byte("Field"), 0644))
+	write := func(name, src string) {
+		require.NoError(t, os.WriteFile(filepath.Join(target, name), []byte(src), 0644))
+	}
+	write("todo.go", "package todo\n\nvar Field struct{ ID int }\n")
+	write("todo_test.go", "package todo_test\n\nvar time = 1\n")
+	write("notes.txt", "Field")
 	staging := t.TempDir()
 	e := &Extension{importsDir: target, splitTmpDir: staging}
-	names := e.packageNames(filepath.Join(staging, "gql_pagination.go"))
-	require.True(t, names["Field"])
-	require.NoError(t, os.WriteFile(filepath.Join(target, "later.go"), []byte("package todo\n\nvar Edge int\n"), 0644))
-	require.False(t, e.packageNames(filepath.Join(target, "x.go"))["Edge"], "a directory is read once")
+	require.Equal(t, map[string]map[string]bool{"todo": {"Field": true}}, e.packageNames(filepath.Join(staging, "gql_pagination.go")))
+	write("later.go", "package todo\n\nvar Edge int\n")
+	require.False(t, e.packageNames(filepath.Join(target, "x.go"))["todo"]["Edge"], "a directory is read once")
 }
