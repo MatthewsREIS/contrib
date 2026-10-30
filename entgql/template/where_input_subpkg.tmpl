@@ -29,10 +29,17 @@ package whereinputs
 
 import (
     "context"
-
     "entgo.io/contrib/entgql/gqlwhere"
     "{{ $.Config.Package }}/predicate"
     "{{ $.Config.Package }}/{{ $n.Package }}"
+    {{- $seen := dict }}
+    {{- range $f := $comparableFields }}
+        {{- $pkg := $f.Type.PkgPath }}
+        {{- if and $pkg (not (hasKey $seen $pkg)) }}
+            {{- $seen = set $seen $pkg true }}
+    {{ $name := $f.Type.PkgName }}{{ if ne $name (base $pkg) }}{{ $name }} {{ end }}"{{ $pkg }}"
+        {{- end }}
+    {{- end }}
 )
 
 {{ $name := $names.Node }}

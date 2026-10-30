@@ -23,8 +23,9 @@ import (
 	"context"
 
 	"{{ $.Config.Package }}/{{ $node.Package }}"
-	{{- with $package := $idType.PkgPath }}
-		"{{ $package }}"
+	{{- with $idType.PkgPath }}
+		{{- $name := $idType.PkgName }}
+		{{ if ne $name (base .) }}{{ $name }} {{ end }}"{{ . }}"
 	{{- end }}
 )
 

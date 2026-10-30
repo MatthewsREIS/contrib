@@ -21,6 +21,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strings"
+	"sync"
 
 	"entgo.io/ent/entc"
 	"entgo.io/ent/entc/gen"
@@ -28,7 +30,6 @@ import (
 	"github.com/99designs/gqlgen/codegen/config"
 	"github.com/vektah/gqlparser/v2/ast"
 	"golang.org/x/sync/errgroup"
-	"golang.org/x/tools/imports"
 )
 
 // ExtensionAnnotation carries graph-level entgql configuration for code generation.
@@ -52,7 +53,9 @@ type (
 		splitGoFiles            bool   // split generated Go files into per-entity files
 		parallelWhereInputFiles bool   // opt-in parallel generation for where-input split files
 		importsDir              string // real target dir for imports.Process path resolution during split generation
-		maxPageSize             int    // server-side default and cap for connection pagination
+		splitTmpDir             string // staging dir whose files are promoted into importsDir
+		packageNamesByDir       sync.Map
+		maxPageSize             int // server-side default and cap for connection pagination
 	}
 
 	// ExtensionOption allows for managing the Extension configuration
@@ -546,6 +549,7 @@ func (e *Extension) generateSplitGoFiles(g *gen.Graph) error {
 	// When generating to tmpDir, imports.Process needs a path inside the real
 	// module tree to correctly resolve packages (e.g., google/uuid vs gofrs/uuid).
 	e.importsDir = g.Target
+	e.splitTmpDir = tmpDir
 
 	// Deep-copy Config so that setting staged.Target does not mutate g.Target.
 	// Graph embeds *Config (pointer), so a shallow copy shares the same Config.
@@ -1356,7 +1360,49 @@ func (e *Extension) processImports(path string, src []byte) ([]byte, error) {
 	if e.importsDir != "" {
 		resolvePath = filepath.Join(e.importsDir, filepath.Base(path))
 	}
-	return imports.Process(resolvePath, src, nil)
+	return formatSource(resolvePath, src, e.packageNames(path))
+}
+
+type dirNames struct {
+	once  sync.Once
+	names map[string]map[string]bool
+}
+
+// packageNames returns, per package clause, the package-level names declared by
+// the non-test Go files already in the directory the generated file is promoted
+// to, read once per directory.
+func (e *Extension) packageNames(path string) map[string]map[string]bool {
+	dir := filepath.Dir(path)
+	if dir == e.splitTmpDir && e.importsDir != "" {
+		dir = e.importsDir
+	}
+	v, _ := e.packageNamesByDir.LoadOrStore(dir, &dirNames{})
+	d := v.(*dirNames)
+	d.once.Do(func() {
+		d.names = map[string]map[string]bool{}
+		entries, _ := os.ReadDir(dir)
+		for _, entry := range entries {
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") || strings.HasSuffix(entry.Name(), "_test.go") {
+				continue
+			}
+			file := filepath.Join(dir, entry.Name())
+			src, err := os.ReadFile(file)
+			if err != nil {
+				continue
+			}
+			pkg, found := packageLevelNames(file, src)
+			if pkg == "" {
+				continue
+			}
+			if d.names[pkg] == nil {
+				d.names[pkg] = map[string]bool{}
+			}
+			for _, n := range found {
+				d.names[pkg][n] = true
+			}
+		}
+	})
+	return d.names
 }
 
 // hasTemplate reports if the template exists

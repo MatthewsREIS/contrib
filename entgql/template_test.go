@@ -16,6 +16,7 @@ package entgql
 
 import (
 	"bytes"
+	"path"
 	"reflect"
 	"strings"
 	"testing"
@@ -664,6 +665,109 @@ func TestPaginationSubpkgTemplateExecution(t *testing.T) {
 	with := render()
 	require.Contains(t, with, "MaxPageSize: 50")
 	require.NotContains(t, with, "MaxPageSize: 0")
+}
+
+func TestSubpkgTemplatesAliasUppercaseIDPackage(t *testing.T) {
+	s, err := gen.NewStorage("sql")
+	require.NoError(t, err)
+	graph, err := entc.LoadGraph("./internal/todo/ent/schema", &gen.Config{Storage: s})
+	require.NoError(t, err)
+
+	var todoNode *gen.Type
+	for _, n := range graph.Nodes {
+		if n.Name == "Todo" {
+			todoNode = n
+			break
+		}
+	}
+	require.NotNil(t, todoNode)
+	idType := *todoNode.ID.Type
+	idType.Ident = "IDs.ID"
+	idType.PkgPath = "example.com/types"
+	idType.PkgName = "IDs"
+	for _, n := range graph.Nodes {
+		n.ID.Type = &idType
+	}
+	graph.IDType = &idType
+
+	var pagination bytes.Buffer
+	require.NoError(t, PaginationSubpkgTemplate.ExecuteTemplate(&pagination, "gql_pagination_subpkg", struct {
+		*gen.Graph
+		Node *gen.Type
+	}{graph, todoNode}))
+	require.Contains(t, pagination.String(), `IDs "example.com/types"`)
+
+	renderCollection := func() string {
+		var buf bytes.Buffer
+		require.NoError(t, CollectionSubpkgTemplate.ExecuteTemplate(&buf, "gql_collection_subpkg", struct {
+			*gen.Graph
+			Node                  *gen.Type
+			HasWhereInputTemplate bool
+			HasPaginationSubpkg   bool
+		}{graph, todoNode, true, true}))
+		return buf.String()
+	}
+	require.Contains(t, renderCollection(), `IDs "example.com/types"`)
+
+	var shared bytes.Buffer
+	require.NoError(t, PaginationSharedTemplate.ExecuteTemplate(&shared, "gql_pagination_shared", struct{ *gen.Graph }{graph}))
+	require.Contains(t, shared.String(), `IDs "example.com/types"`)
+	shared.Reset()
+	require.NoError(t, CollectionSubpkgRuntimeTemplate.Execute(&shared, struct{ *gen.Graph }{graph}))
+	require.Contains(t, shared.String(), `IDs "example.com/types"`)
+	shared.Reset()
+	require.NoError(t, NodeSharedTemplate.ExecuteTemplate(&shared, "gql_node_shared", struct {
+		*gen.Graph
+		HasNodeDescriptorTemplate bool
+	}{graph, true}))
+	require.Contains(t, shared.String(), `IDs "example.com/types"`)
+	shared.Reset()
+	require.NoError(t, NodeEntityTemplate.ExecuteTemplate(&shared, "gql_node_entity", struct {
+		*gen.Graph
+		Node                  *gen.Type
+		HasCollectionTemplate bool
+	}{graph, todoNode, true}))
+	require.Contains(t, shared.String(), `IDs "example.com/types"`)
+
+	// The collection file only names the ID type inside relay-connection arms.
+	todoNode.Edges = nil
+	require.NotContains(t, renderCollection(), `"example.com/types"`)
+}
+
+func TestMutationInputSiblingImportsOnlyInputTypes(t *testing.T) {
+	s, err := gen.NewStorage("sql")
+	require.NoError(t, err)
+	graph, err := entc.LoadGraph("./internal/todo/ent/schema", &gen.Config{Storage: s})
+	require.NoError(t, err)
+
+	custom := func(pkg string) *field.TypeInfo {
+		return &field.TypeInfo{
+			Type:     field.TypeJSON,
+			Ident:    path.Base(pkg) + ".T",
+			Nillable: true,
+			RType:    &field.RType{Kind: reflect.Slice},
+			PkgPath:  pkg,
+			PkgName:  path.Base(pkg),
+		}
+	}
+	widget := &gen.Type{
+		Name: "Widget",
+		ID:   &gen.Field{Name: "id", Type: custom("example.com/ids")},
+		Fields: []*gen.Field{
+			{Name: "used", Type: custom("example.com/used")},
+			{Name: "frozen", Type: custom("example.com/frozen"), Immutable: true},
+		},
+	}
+	var buf bytes.Buffer
+	require.NoError(t, MutationInputSiblingTemplate.Execute(&buf, struct {
+		*gen.Graph
+		EntityName string
+		Inputs     []*MutationDescriptor
+	}{graph, "Widget", []*MutationDescriptor{{Type: widget, IsCreate: false}}}))
+	out := buf.String()
+	require.Contains(t, out, `"example.com/used"`)
+	require.NotContains(t, out, `"example.com/frozen"`, "an immutable field is not an update input")
+	require.NotContains(t, out, `"example.com/ids"`, "the node's own ID is not an input")
 }
 
 func TestMutationInputSiblingTemplateExecution(t *testing.T) {

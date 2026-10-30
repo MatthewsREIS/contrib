@@ -23,8 +23,9 @@ import (
 	"entgo.io/contrib/entgql/gqlpage"
 	"github.com/99designs/gqlgen/graphql"
 	"github.com/vektah/gqlparser/v2/gqlerror"
-	{{- if $idType.PkgPath }}
-	"{{ $idType.PkgPath }}"
+	{{- with $idType.PkgPath }}
+		{{- $name := $idType.PkgName }}
+	{{ if ne $name (base .) }}{{ $name }} {{ end }}"{{ . }}"
 	{{- end }}
 )
 
