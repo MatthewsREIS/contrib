@@ -76,7 +76,8 @@ func Conn[Q any, T any, ID any](ctx context.Context, ops *gqlpage.Ops[Q, T, ID],
 			return nil, err
 		}
 		conn := &gqlpage.Connection[T, ID]{Edges: []*gqlpage.Edge[T, ID]{}, TotalCount: totalCount}
-		conn.Build(nodes, pager.ToCursor, pager.Reverse(), after, first, before, last)
+		conn.Build(nodes, pager.ToCursor, pager.Reverse(), after,
+			gqlpage.PageSize(first, ops.MaxPageSize), before, gqlpage.PageSize(last, ops.MaxPageSize))
 		return conn, nil
 	}
 	return gqlpage.Paginate(query(), ctx, after, first, before, last, ops, opts...)

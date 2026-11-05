@@ -303,6 +303,26 @@ func TestConn_PreloadedNodes_BuildsWithoutQuerying(t *testing.T) {
 	require.Equal(t, 2, conn.TotalCount)
 }
 
+func TestConn_PreloadedNodes_FirstAboveMaxPageSize_ReportsNextPage(t *testing.T) {
+	ops := newFakeConnOps()
+	ops.MaxPageSize = 50
+	nodes := make([]*fakeEntity, 51)
+	for index := range nodes {
+		nodes[index] = &fakeEntity{ID: uuid.New()}
+	}
+	first := 200
+
+	conn, err := gqledge.Conn[fakeQuery, fakeEntity, uuid.UUID](
+		context.Background(), ops, nil, "", 0, false,
+		func(string) ([]*fakeEntity, error) { return nodes, nil },
+		func() *fakeQuery { return &fakeQuery{} },
+		nil, &first, nil, nil,
+	)
+	require.NoError(t, err)
+	require.Len(t, conn.Edges, 50)
+	require.True(t, conn.PageInfo.HasNextPage)
+}
+
 func TestConn_NamedErrButTotalCountLoaded_StillBuildsFromNodes(t *testing.T) {
 	// hasTotalCount alone (totalCount collected but edges weren't) is enough
 	// to take the "preloaded" branch, mirroring the old template's

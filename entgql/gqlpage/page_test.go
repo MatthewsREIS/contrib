@@ -675,6 +675,40 @@ func TestPaginate_HappyPath(t *testing.T) {
 	require.Equal(t, nodes[0], conn.Edges[0].Node)
 }
 
+func TestPaginate_FirstAboveMaxPageSize_ReportsNextPage(t *testing.T) {
+	ops := newFakeOps(false, defaultOrder, nil)
+	ops.MaxPageSize = 50
+	q := &fakeQuery{AllResult: newEntities(51)}
+	first := 200
+	conn, err := gqlpage.Paginate[fakeQuery, fakeEntity, uuid.UUID](q, fieldSelection("edges"), nil, &first, nil, nil, ops)
+	require.NoError(t, err)
+	require.Equal(t, 51, q.LimitVal)
+	require.Len(t, conn.Edges, 50)
+	require.True(t, conn.PageInfo.HasNextPage)
+	require.Equal(t, conn.Edges[49].Cursor, *conn.PageInfo.EndCursor)
+}
+
+func TestPaginate_LastAboveMaxPageSize_ReportsPreviousPage(t *testing.T) {
+	ops := newFakeOps(false, defaultOrder, nil)
+	ops.MaxPageSize = 50
+	q := &fakeQuery{AllResult: newEntities(51)}
+	last := 200
+	conn, err := gqlpage.Paginate[fakeQuery, fakeEntity, uuid.UUID](q, fieldSelection("edges"), nil, nil, nil, &last, ops)
+	require.NoError(t, err)
+	require.Len(t, conn.Edges, 50)
+	require.True(t, conn.PageInfo.HasPreviousPage)
+}
+
+func TestPageSize(t *testing.T) {
+	two, fifty, twoHundred := 2, 50, 200
+	require.Nil(t, gqlpage.PageSize(nil, 50))
+	require.Equal(t, 2, *gqlpage.PageSize(&two, 50))
+	require.Equal(t, 50, *gqlpage.PageSize(&fifty, 50))
+	require.Equal(t, 50, *gqlpage.PageSize(&twoHundred, 50))
+	require.Equal(t, 200, *gqlpage.PageSize(&twoHundred, 0))
+	require.Equal(t, 200, twoHundred, "the caller's argument must not be mutated")
+}
+
 // --- ToEdge / ToCursor -------------------------------------------------
 
 func TestToEdge_UsesGivenOrderOrFallsBackToDefault(t *testing.T) {
