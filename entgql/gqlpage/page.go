@@ -501,6 +501,15 @@ func PaginateLimit(first, last *int, max int) int {
 	return limit
 }
 
+// PageSize caps first or last at max, matching PaginateLimit's LIMIT cap.
+// Connection.Build MUST receive the capped value to detect the extra row.
+func PageSize(n *int, max int) *int {
+	if n == nil || max <= 0 || *n <= max {
+		return n
+	}
+	return &max
+}
+
 const (
 	edgesField      = "edges"
 	nodeField       = "node"
@@ -521,6 +530,7 @@ func Paginate[Q any, T any, ID any](q *Q, ctx context.Context,
 	if err := ValidateFirstLast(first, last); err != nil {
 		return nil, err
 	}
+	first, last = PageSize(first, ops.MaxPageSize), PageSize(last, ops.MaxPageSize)
 	pager, err := NewPager(ops, opts, last != nil)
 	if err != nil {
 		return nil, err
